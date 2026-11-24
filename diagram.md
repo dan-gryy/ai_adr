@@ -1,96 +1,80 @@
-# ER-модель EchoLink
+# Діаграми послідовності (UC: «Відправка повідомлення»)
 
-```mermaid
-erDiagram
-    User {
-        UUID id PK
-        String username
-        String email
-    }
+## Сценарій 1: Успішна відправка повідомлення (Happy path)
 
-    ChatRoom {
-        UUID id PK
-        String name
-        Timestamp created_at
-    }
-
-    Message {
-        UUID id PK
-        String content
-        Timestamp sent_at
-        UUID author_id FK
-        UUID room_id FK
-    }
-
-    User ||--o{ Message : "writes"
-    ChatRoom ||--o{ Message : "contains"
-    User }o--o{ ChatRoom : "participates in"
-```
-
-## Завдання 3: Sequence Diagrams (UC-01)
-
-**Сценарій 1: Успішна відправка повідомлення**
 ```mermaid
 sequenceDiagram
     actor Client
     participant TCPServer
     participant Database
+    actor OtherClients
 
-    Client->>TCPServer: sendMessage(authToken, chatId, payload)
+    Client ->> TCPServer: sendMessage(chatId, userId, payload)
     activate TCPServer
-    
-    TCPServer->>TCPServer: validateSession(authToken)
-    TCPServer->>Database: verifyUserAccess(userId, chatId)
+
+    TCPServer ->> Database: verifyUserAccess(chatId, userId)
     activate Database
-    Database-->>TCPServer: accessStatus = true
+    Database -->> TCPServer: accessStatus = true
     deactivate Database
 
-    alt accessStatus == true
-        TCPServer->>Database: insertMessage(chatId, userId, payload)
-        activate Database
-        Database-->>TCPServer: return newMessageId
-        deactivate Database
-        
-        loop For each online participant in chatId
-            TCPServer->>Client: pushEvent(newMessageId, payload)
-        end
-        
-        TCPServer-->>Client: returnResponse(200, "Message sent")
-    else accessStatus == false
-        TCPServer-->>Client: returnResponse(403, "Access denied")
+    TCPServer ->> Database: insertMessage(chatId, userId, payload)
+    activate Database
+    Database -->> TCPServer: messageId
+    deactivate Database
+
+    loop Для кожного активного учасника кімнати (крім відправника)
+        TCPServer -) OtherClients: pushEvent(messageId, userId, payload)
     end
-    
+
+    TCPServer -->> Client: 200 OK (messageId)
     deactivate TCPServer
 ```
-**Сценарій 2: Помилка валідації**
+
+## Сценарій 2: Перевищення ліміту довжини повідомлення (Alternate path)
+
 ```mermaid
 sequenceDiagram
     actor Client
     participant TCPServer
     participant Database
 
-    Client->>TCPServer: sendMessage(authToken, chatId, payload)
+    Client ->> TCPServer: sendMessage(chatId, userId, payload)
     activate TCPServer
-    
-    TCPServer->>TCPServer: validateSession(authToken)
-    
-    alt payload.length > MAX_LENGTH
-        TCPServer-->>Client: returnResponse(400, "Payload too large")
-        
-        opt Security Audit
-            TCPServer->>Database: logSuspiciousActivity(userId, "Oversized payload")
+
+    TCPServer ->> TCPServer: validateLength(payload)
+
+    break Довжина повідомлення понад 1000 символів
+        opt Підозріла спам-активність (довжина понад 5000 символів)
+            TCPServer ->> Database: logSuspiciousActivity(userId, chatId, length)
             activate Database
-            Database-->>TCPServer: ack
+            Database -->> TCPServer: logged
             deactivate Database
         end
-        
-    else payload is valid
-        TCPServer->>Database: verifyUserAccess(userId, chatId)
-        activate Database
-        Database-->>TCPServer: accessStatus = false
-        deactivate Database
-        TCPServer-->>Client: returnResponse(403, "Not a member of this chat")
+        TCPServer -->> Client: 400 Bad Request (Limit exceeded)
     end
-    
+
+    deactivate TCPServer
+```
+
+## Сценарій 3: Відправка повідомлення заблокованим користувачем (Error path)
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant TCPServer
+    participant Database
+
+    Client ->> TCPServer: sendMessage(chatId, userId, payload)
+    activate TCPServer
+
+    TCPServer ->> Database: verifyUserAccess(chatId, userId)
+    activate Database
+    Database -->> TCPServer: accessStatus = false
+    deactivate Database
+
+    break Користувач заблокований або не є учасником кімнати
+        TCPServer -->> Client: 403 Forbidden (Access denied)
+    end
+
     deactivate TCPServer
 ```
