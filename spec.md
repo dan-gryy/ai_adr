@@ -57,3 +57,25 @@
 | REQ-F01 | UC: Send Message (Сценарій 1 - Успішна відправка) |
 | REQ-F02 | UC: Send Message (Сценарій 2 - Перевищення ліміту) |
 | REQ-F03 | UC: Send Message (Сценарій 3 - Блокування) |
+
+
+# Завдання 3: Діаграми взаємодії (Sequence Diagrams)
+
+## 1. Прецедент, учасники та сценарії взаємодії
+Деталізовано прецедент **«Відправка повідомлення» (Send Message)** у вигляді трьох окремих діаграм послідовності у файлі `diagram.md`:
+
+* **Сценарій 1 (Успішна відправка):**
+  * *Учасники:* `Client` (актор), `TCPServer`, `Database`, `OtherClients` (актор).
+  * *Кроки:* `Client` викликає `sendMessage(chatId, userId, payload)` -> `TCPServer` перевіряє доступ через `verifyUserAccess(chatId, userId)` (отримує `true`) -> записує повідомлення через `insertMessage(chatId, userId, payload)` (отримує `messageId`) -> у циклі `loop` асинхронно надсилає `pushEvent` учасникам `OtherClients` -> повертає відправнику `200 OK (messageId)`.
+* **Сценарій 2 (Перевищення ліміту довжини понад 1000 символів):**
+  * *Учасники:* `Client` (актор), `TCPServer`, `Database`.
+  * *Кроки:* `Client` викликає `sendMessage` -> `TCPServer` виконує перевірку `validateLength(payload)` -> спрацьовує блок раннього виходу `break` -> якщо довжина понад 5000 символів, у блоці `opt` викликається `logSuspiciousActivity` у `Database` -> `TCPServer` повертає `400 Bad Request`.
+* **Сценарій 3 (Користувача заблоковано або немає доступу до кімнати):**
+  * *Учасники:* `Client` (актор), `TCPServer`, `Database`.
+  * *Кроки:* `Client` викликає `sendMessage` -> `TCPServer` викликає `verifyUserAccess(chatId, userId)` -> `Database` повертає `accessStatus = false` -> спрацьовує блок `break` -> `TCPServer` повертає `403 Forbidden`.
+
+## 2. Критерії приймання (Acceptance Criteria)
+* Для кожного з трьох сценаріїв Gherkin побудовано окрему діаграму послідовності.
+* Помилкові виходи (коди 400 та 403) оформлені фрагментом `break`, а не `alt`.
+* Розсилка іншим учасникам (`OtherClients`) виконується асинхронно `-)` у межах `loop` лише після синхронного підтвердження запису від `Database`.
+* Смуга активації `TCPServer` охоплює обробку запиту, `Database` активується на час кожного запиту, а на акторів смуги активації не накладаються.
